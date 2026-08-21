@@ -1,0 +1,99 @@
+# Person putting a box into a bag — detection + rule engine
+
+detector:
+  # yolo_world: open-vocab person/box/bag (no custom weights needed)
+  # custom: one YOLO model whose classes map to person/box/bag
+  # dual: COCO (or any) person model + a separate box/bag model
+  mode: yolo_world
+
+  device: ""          # "" = auto (cuda if available, else cpu)
+  conf: 0.25
+  iou: 0.45
+  imgsz: 640
+
+  yolo_world:
+    weights: yolov8s-worldv2.pt
+    # Prompts sent to YOLO-World. Canonical labels are person / box / bag.
+    prompts:
+      person:
+        - person
+      box:
+        - cardboard box
+        - box
+        - package
+      bag:
+        - shopping bag
+        - bag
+        - backpack
+        - handbag
+        - plastic bag
+
+  custom:
+    weights: models/person_box_bag.pt
+    class_map:
+      0: person
+      1: box
+      2: bag
+
+  dual:
+    person:
+      weights: yolov8n.pt
+      class_ids: [0]          # COCO person
+    objects:
+      weights: models/box_bag.pt
+      class_map:
+        0: box
+        1: bag
+
+tracker:
+  iou_threshold: 0.3
+  max_missed: 20              # frames a track can disappear before it is dropped
+
+rules:
+  # Person is carrying a box
+  hold_score_threshold: 0.50
+  min_hold_frames: 8
+
+  # Person is close enough to a bag to insert into it
+  near_bag_score_threshold: 0.40
+  min_near_bag_frames: 5
+
+  # Box is entering / inside the bag (containment = intersection / box_area)
+  insert_score_threshold: 0.45
+  outside_containment: 0.20   # box must have been this "outside" the bag first
+  min_insert_frames: 6
+
+  # After an event, ignore repeats for this person
+  event_cooldown_frames: 60
+
+alerts:
+  enabled: true
+  snapshot: true              # save annotated JPEG under outputs/alerts/
+  sound: true                 # play Sosumi (macOS)
+  desktop: true               # macOS Notification Center popup
+  cooldown_seconds: 8         # extra debounce on top of the rule-engine cooldown
+  webhook_url: ""             # Slack / Discord / n8n incoming webhook (optional)
+
+recorder:
+  enabled: true
+  event_clips: true           # save a clip around each put-box-in-bag event
+  preroll_seconds: 6          # seconds kept in memory before the event
+  postroll_seconds: 8         # seconds kept recording after the event
+  continuous: false           # auto-record rotating files (REC button still works either way)
+  segment_seconds: 300        # 5-minute continuous files
+  max_segments: 24            # keep ~2 hours; 0 = unlimited
+  annotated: true             # record overlay (boxes / state), not raw camera
+
+visualizer:
+  show: true
+  write: false                # session-long mp4; recorder handles video instead
+  output_dir: outputs
+  draw_scores: true
+  trail_length: 20
+
+source:
+  path: rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101/
+  stride: 1
+  rtsp_transport: tcp         # tcp is more reliable than udp on LAN cameras
+  reconnect: true
+  reconnect_delay: 1.0        # seconds to wait before reopening a dropped RTSP stream

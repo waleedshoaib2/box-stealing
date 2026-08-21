@@ -1,0 +1,4 @@
+# Local overrides — copy to config.local.yaml (gitignored).
+
+source:
+  path: rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101/
