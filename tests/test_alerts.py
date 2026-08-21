@@ -6,6 +6,7 @@ import unittest
 
 from src.alerts import _webhook_body, format_alert
 from src.event_detector import PutBoxInBagEvent
+from src.opening_detector import OpenBoxEvent
 
 
 def _event() -> PutBoxInBagEvent:
@@ -24,6 +25,19 @@ def _event() -> PutBoxInBagEvent:
 
 
 class AlertFormatTests(unittest.TestCase):
+    def test_open_box_message(self) -> None:
+        event = OpenBoxEvent(
+            frame_idx=1,
+            timestamp=0.0,
+            person_id=4,
+            box_id=9,
+            interact_score=1.0,
+            growth=0.3,
+            lid_score=0.0,
+            reason="open_box_detected",
+        )
+        self.assertEqual(format_alert(event), "Open box detected — person #4 (open_box_detected)")
+
     def test_message_includes_ids(self) -> None:
         text = format_alert(_event())
         self.assertIn("Person #1", text)

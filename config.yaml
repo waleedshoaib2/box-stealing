@@ -56,6 +56,7 @@ tracker:
   max_missed: 20              # frames a track can disappear before it is dropped
 
 rules:
+  enabled: true               # put-box-in-bag
   # Person is carrying a box
   hold_score_threshold: 0.50
   min_hold_frames: 8
@@ -73,7 +74,7 @@ rules:
   event_cooldown_frames: 60
 
 opening:
-  enabled: true
+  enabled: false              # person opening a box — use config.open.yaml / --task open
   interact_score_threshold: 0.45
   min_interact_frames: 8
   height_growth_threshold: 0.20   # box must grow 20% vs closed baseline
@@ -105,6 +106,7 @@ visualizer:
   output_dir: outputs
   draw_scores: true
   trail_length: 20
+  window_name: put-box-in-bag
 
 source:
   path: rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101/

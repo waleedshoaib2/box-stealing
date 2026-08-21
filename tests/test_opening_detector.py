@@ -85,7 +85,7 @@ class OpeningEngineTests(unittest.TestCase):
         for _ in range(6):
             frames.append([person_track(1, PERSON), box_track(2, OPEN_BOX, cls="open_box")])
         events = self._run(frames)
-        self.assertTrue(any(e.reason == "label_open_box" or e.event == EVENT for e in events), events)
+        self.assertTrue(any(e.reason == "open_box_detected" for e in events), events)
         self.assertEqual(self.engine.states()[1].state, EVENT)
 
 

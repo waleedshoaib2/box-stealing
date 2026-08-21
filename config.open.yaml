@@ -1,0 +1,73 @@
+# Person opening a box — standalone (no bag-in-box rules)
+
+detector:
+  mode: yolo_world
+  device: ""
+  conf: 0.25
+  iou: 0.45
+  imgsz: 640
+
+  yolo_world:
+    weights: yolov8s-worldv2.pt
+    prompts:
+      person:
+        - person
+      box:
+        - cardboard box
+        - box
+        - package
+      open_box:
+        - open cardboard box
+        - open box
+      lid:
+        - box lid
+        - cardboard flap
+
+tracker:
+  iou_threshold: 0.3
+  max_missed: 20
+
+rules:
+  enabled: false              # bag-in-box stays off in this config
+
+opening:
+  enabled: true
+  interact_score_threshold: 0.45
+  min_interact_frames: 8
+  height_growth_threshold: 0.20
+  lid_score_threshold: 0.70
+  min_open_frames: 5
+  event_cooldown_frames: 60
+
+alerts:
+  enabled: true
+  snapshot: true
+  sound: true
+  desktop: true
+  cooldown_seconds: 8
+  webhook_url: ""
+
+recorder:
+  enabled: true
+  event_clips: true
+  preroll_seconds: 6
+  postroll_seconds: 8
+  continuous: false
+  segment_seconds: 300
+  max_segments: 24
+  annotated: true
+
+visualizer:
+  show: true
+  write: false
+  output_dir: outputs
+  draw_scores: true
+  trail_length: 20
+  window_name: open-box
+
+source:
+  path: rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101/
+  stride: 1
+  rtsp_transport: tcp
+  reconnect: true
+  reconnect_delay: 1.0

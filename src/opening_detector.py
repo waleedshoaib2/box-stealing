@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.association import height_growth, interact_score, is_open_box, lid_lift_score
-from src.geometry import height
+from src.geometry import height, iou
 from src.tracker import Track
 
 
@@ -175,7 +175,8 @@ class OpeningEngine:
 
         long_enough = ctx.interact_frames >= self.min_interact_frames
         grew = ctx.growth >= self.height_growth_threshold
-        became_open = is_open_box(target) and ctx.had_closed
+        sees_open = _sees_open_box(target, boxes)
+        became_open = sees_open and ctx.had_closed
         lid_up = ctx.lid_score >= self.lid_score_threshold and ctx.had_closed
         opening_now = visible and long_enough and ctx.had_closed and (grew or became_open or lid_up)
 
@@ -187,7 +188,12 @@ class OpeningEngine:
             ctx.state = INTERACTING if long_enough else IDLE
 
         if ctx.open_frames >= self.min_open_frames:
-            reason = "box_grew_open" if grew else ("label_open_box" if became_open else "lid_lifted")
+            if sees_open:
+                reason = "open_box_detected"
+            elif grew:
+                reason = "box_grew_open"
+            else:
+                reason = "lid_lifted"
             return self._emit(ctx, frame_idx, timestamp, reason)
         return None
 
@@ -204,6 +210,9 @@ class OpeningEngine:
             visible = prev.missed == 0
             if not visible:
                 return prev, score, False
+            for other in boxes:
+                if other.missed == 0 and is_open_box(other) and iou(prev.bbox, other.bbox) >= 0.25:
+                    return other, max(score, interact_score(person, other)), True
             if score >= self.interact_score_threshold * 0.5 or ctx.state == OPENING:
                 return prev, score, True
 
@@ -213,6 +222,8 @@ class OpeningEngine:
             if box.missed != 0:
                 continue
             score = interact_score(person, box)
+            if is_open_box(box):
+                score += 0.35
             if score > best_score:
                 best, best_score = box, score
         if best is not None and best_score >= self.interact_score_threshold:
@@ -238,3 +249,14 @@ class OpeningEngine:
         )
         ctx.box_id = None
         return event
+
+
+def _sees_open_box(target: Track, boxes: list[Track]) -> bool:
+    if is_open_box(target):
+        return True
+    for other in boxes:
+        if other.missed != 0 or not is_open_box(other):
+            continue
+        if other.track_id == target.track_id or iou(target.bbox, other.bbox) >= 0.25:
+            return True
+    return False

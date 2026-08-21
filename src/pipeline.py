@@ -53,7 +53,10 @@ class Pipeline:
             iou_threshold=float(tracker_cfg.get("iou_threshold", 0.3)),
             max_missed=int(tracker_cfg.get("max_missed", 20)),
         )
-        self.engine = RuleEngine.from_config(cfg.get("rules", {}))
+        rules_cfg = cfg.get("rules", {})
+        self.engine: RuleEngine | None = None
+        if bool(rules_cfg.get("enabled", True)):
+            self.engine = RuleEngine.from_config(rules_cfg)
         opening_cfg = cfg.get("opening", {})
         self.opening: OpeningEngine | None = None
         if bool(opening_cfg.get("enabled", True)):
@@ -63,6 +66,7 @@ class Pipeline:
         self.write = bool(vis.get("write", True))
         self.output_dir = Path(vis.get("output_dir", "outputs"))
         self.draw_scores = bool(vis.get("draw_scores", True))
+        self.window_name = str(vis.get("window_name") or WINDOW_NAME)
         self.alerter = Alerter(cfg.get("alerts"), self.output_dir)
         self._recorder_cfg = cfg.get("recorder", {})
         self.recorder: Recorder | None = None
@@ -109,9 +113,15 @@ class Pipeline:
         frame_idx = 0
         record_button = RecordButton()
         if self.show:
-            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(WINDOW_NAME, width, height)
-            record_button.attach(WINDOW_NAME)
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_name, width, height)
+            record_button.attach(self.window_name)
+        mode = []
+        if self.engine is not None:
+            mode.append("put-box-in-bag")
+        if self.opening is not None:
+            mode.append("open-box")
+        print("Mode: " + (" + ".join(mode) if mode else "detect only"))
         print("Running. Click REC or press R to record. Press q to quit.")
         try:
             while True:
@@ -137,7 +147,9 @@ class Pipeline:
                 detections = self.detector.infer(frame)
                 tracks = self.tracker.update(detections)
                 timestamp = frame_idx / fps if fps > 0 else 0.0
-                events = list(self.engine.update(tracks, frame_idx, timestamp))
+                events = []
+                if self.engine is not None:
+                    events.extend(self.engine.update(tracks, frame_idx, timestamp))
                 if self.opening is not None:
                     events.extend(self.opening.update(tracks, frame_idx, timestamp))
                 if events:
@@ -146,7 +158,7 @@ class Pipeline:
                 vis = draw(
                     frame,
                     tracks,
-                    self.engine.states(),
+                    self.engine.states() if self.engine else {},
                     events,
                     banner_frames=self._banner,
                     draw_scores=self.draw_scores,
@@ -180,7 +192,7 @@ class Pipeline:
                     recording = bool(self.recorder and self.recorder.is_manual_recording)
                     elapsed = self.recorder.manual_elapsed if self.recorder else 0.0
                     record_button.rect = draw_record_button(display, recording, elapsed)
-                    cv2.imshow(WINDOW_NAME, display)
+                    cv2.imshow(self.window_name, display)
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
                         break

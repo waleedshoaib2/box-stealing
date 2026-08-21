@@ -20,7 +20,8 @@ source:
 ## Run
 
 ```bash
-python3 run.py                         # uses config (and config.local.yaml if present)
+python3 run.py --task open             # person opening a box only
+python3 run.py                         # put-box-in-bag (config.yaml)
 python3 run.py --source video.mp4
 python3 run.py --test-alert            # desktop + sound alert without the camera
 ```

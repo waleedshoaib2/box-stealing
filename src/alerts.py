@@ -58,7 +58,7 @@ class Alerter:
         if self.desktop or self.sound:
             threading.Thread(
                 target=_macos_notify,
-                args=(message, self.desktop, self.sound),
+                args=(desktop_message(event), self.desktop, self.sound, alert_title(event)),
                 daemon=True,
             ).start()
         if self.webhook_url:
@@ -90,11 +90,7 @@ def format_alert(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
     kind = getattr(event, "event", "")
     box = f"box#{event.box_id}" if event.box_id is not None else "box"
     if kind == "open_box":
-        growth = getattr(event, "growth", 0.0)
-        return (
-            f"Person #{event.person_id} opened {box} "
-            f"({event.reason}, growth={growth:.2f})"
-        )
+        return f"Open box detected — person #{event.person_id} ({event.reason})"
     bag = f"bag#{getattr(event, 'bag_id', None)}" if getattr(event, "bag_id", None) is not None else "bag"
     insert = getattr(event, "insert_score", 0.0)
     return (
@@ -103,7 +99,19 @@ def format_alert(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
     )
 
 
-def _macos_notify(message: str, desktop: bool, sound: bool) -> None:
+def alert_title(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
+    if getattr(event, "event", "") == "open_box":
+        return "Open box"
+    return "Box in bag"
+
+
+def desktop_message(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
+    if getattr(event, "event", "") == "open_box":
+        return "Open box detected"
+    return format_alert(event)
+
+
+def _macos_notify(message: str, desktop: bool, sound: bool, title: str = "Box alert") -> None:
     if sys.platform != "darwin":
         if sound:
             sys.stdout.write("\a")
@@ -113,7 +121,7 @@ def _macos_notify(message: str, desktop: bool, sound: bool) -> None:
         sound_clause = " sound name \"Sosumi\"" if sound else ""
         script = (
             f'display notification "{_osa_escape(message)}" '
-            f'with title "Box alert"{sound_clause}'
+            f'with title "{_osa_escape(title)}"{sound_clause}'
         )
         _run(["osascript", "-e", script])
         return
