@@ -1,6 +1,6 @@
 # Box-in-bag detection
 
-Rule-based detector for a person putting a box into a bag. YOLO finds person / box / bag, then a state machine decides whether the action happened.
+Rule-based detector for a person putting a box into a bag, or opening a box. YOLO finds person / box / bag / open box, then state machines decide whether the action happened.
 
 ## Setup
 

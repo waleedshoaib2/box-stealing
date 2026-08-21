@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from src.event_detector import PutBoxInBagEvent
+from src.opening_detector import OpenBoxEvent
 
 
 class Recorder:
@@ -70,7 +71,7 @@ class Recorder:
         if self.continuous:
             self._write_segment(copied)
 
-    def trigger(self, event: PutBoxInBagEvent) -> Path | None:
+    def trigger(self, event: PutBoxInBagEvent | OpenBoxEvent) -> Path | None:
         if not self.enabled or not self.event_clips:
             return None
         if self._clip_writer is not None:
@@ -79,8 +80,9 @@ class Recorder:
 
         self.events_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
+        kind = getattr(event, "event", "event")
         path = self.events_dir / (
-            f"put_box_in_bag_{stamp}_p{event.person_id}_f{event.frame_idx}.mp4"
+            f"{kind}_{stamp}_p{event.person_id}_f{event.frame_idx}.mp4"
         )
         writer = _open_writer(path, self.fps, self.frame_size)
         if writer is None:

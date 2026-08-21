@@ -27,6 +27,12 @@ detector:
         - backpack
         - handbag
         - plastic bag
+      open_box:
+        - open cardboard box
+        - open box
+      lid:
+        - box lid
+        - cardboard flap
 
   custom:
     weights: models/person_box_bag.pt
@@ -64,6 +70,15 @@ rules:
   min_insert_frames: 6
 
   # After an event, ignore repeats for this person
+  event_cooldown_frames: 60
+
+opening:
+  enabled: true
+  interact_score_threshold: 0.45
+  min_interact_frames: 8
+  height_growth_threshold: 0.20   # box must grow 20% vs closed baseline
+  lid_score_threshold: 0.70
+  min_open_frames: 5
   event_cooldown_frames: 60
 
 alerts:

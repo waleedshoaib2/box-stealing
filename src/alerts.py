@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 
 from src.event_detector import PutBoxInBagEvent
+from src.opening_detector import OpenBoxEvent
 
 
 class Alerter:
@@ -39,7 +40,7 @@ class Alerter:
 
     def notify(
         self,
-        event: PutBoxInBagEvent,
+        event: PutBoxInBagEvent | OpenBoxEvent,
         frame: np.ndarray | None,
         extras: dict[str, Any] | None = None,
     ) -> Path | None:
@@ -74,22 +75,31 @@ class Alerter:
             ).start()
         return snapshot_path
 
-    def _write_snapshot(self, event: PutBoxInBagEvent, frame: np.ndarray | None) -> Path | None:
+    def _write_snapshot(self, event: PutBoxInBagEvent | OpenBoxEvent, frame: np.ndarray | None) -> Path | None:
         if not self.save_snapshot or frame is None:
             return None
         self.alert_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        path = self.alert_dir / f"put_box_in_bag_{stamp}_p{event.person_id}_f{event.frame_idx}.jpg"
+        kind = getattr(event, "event", "event")
+        path = self.alert_dir / f"{kind}_{stamp}_p{event.person_id}_f{event.frame_idx}.jpg"
         cv2.imwrite(str(path), frame)
         return path
 
 
-def format_alert(event: PutBoxInBagEvent) -> str:
+def format_alert(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
+    kind = getattr(event, "event", "")
     box = f"box#{event.box_id}" if event.box_id is not None else "box"
-    bag = f"bag#{event.bag_id}" if event.bag_id is not None else "bag"
+    if kind == "open_box":
+        growth = getattr(event, "growth", 0.0)
+        return (
+            f"Person #{event.person_id} opened {box} "
+            f"({event.reason}, growth={growth:.2f})"
+        )
+    bag = f"bag#{getattr(event, 'bag_id', None)}" if getattr(event, "bag_id", None) is not None else "bag"
+    insert = getattr(event, "insert_score", 0.0)
     return (
         f"Person #{event.person_id} put {box} into {bag} "
-        f"({event.reason}, insert={event.insert_score:.2f})"
+        f"({event.reason}, insert={insert:.2f})"
     )
 
 
@@ -103,7 +113,7 @@ def _macos_notify(message: str, desktop: bool, sound: bool) -> None:
         sound_clause = " sound name \"Sosumi\"" if sound else ""
         script = (
             f'display notification "{_osa_escape(message)}" '
-            f'with title "Put box in bag"{sound_clause}'
+            f'with title "Box alert"{sound_clause}'
         )
         _run(["osascript", "-e", script])
         return

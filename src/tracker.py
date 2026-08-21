@@ -12,7 +12,13 @@ from typing import Iterable
 from src.geometry import BBox, as_xyxy, iou
 
 
-CANONICAL_CLASSES = ("person", "box", "bag")
+CANONICAL_CLASSES = ("person", "box", "bag", "open_box", "lid")
+TRACK_GROUPS: dict[str, tuple[str, ...]] = {
+    "person": ("person",),
+    "box": ("box", "open_box"),
+    "bag": ("bag",),
+    "lid": ("lid",),
+}
 
 
 @dataclass
@@ -68,18 +74,21 @@ class IoUTracker:
         return self._tracks.get(track_id)
 
     def update(self, detections: Iterable[Detection]) -> list[Track]:
-        by_class: dict[str, list[Detection]] = {c: [] for c in CANONICAL_CLASSES}
+        by_group: dict[str, list[Detection]] = {g: [] for g in TRACK_GROUPS}
         for det in detections:
-            if det.cls in by_class:
-                by_class[det.cls].append(det)
+            if det.cls not in CANONICAL_CLASSES:
+                continue
+            group = next(g for g, classes in TRACK_GROUPS.items() if det.cls in classes)
+            by_group[group].append(det)
 
         matched_ids: set[int] = set()
-        for cls, dets in by_class.items():
-            class_tracks = [t for t in self._tracks.values() if t.cls == cls]
+        for group, dets in by_group.items():
+            class_tracks = [t for t in self._tracks.values() if t.cls in TRACK_GROUPS[group]]
             pairs = _greedy_match(class_tracks, dets, self.iou_threshold)
             used_dets: set[int] = set()
             for track, det_idx in pairs:
                 det = dets[det_idx]
+                track.cls = det.cls
                 track.record(as_xyxy(det.bbox), det.conf, det.raw_label)
                 matched_ids.add(track.track_id)
                 used_dets.add(det_idx)
@@ -88,7 +97,7 @@ class IoUTracker:
                     continue
                 track = Track(
                     track_id=self._next_id,
-                    cls=cls,
+                    cls=det.cls,
                     bbox=as_xyxy(det.bbox),
                     conf=det.conf,
                     raw_label=det.raw_label,

@@ -5,7 +5,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from src.event_detector import PersonState, PutBoxInBagEvent
+from src.event_detector import PersonState
+from src.opening_detector import OpeningState
 from src.tracker import Track
 
 
@@ -14,6 +15,8 @@ WINDOW_NAME = "put-box-in-bag"
 COLORS = {
     "person": (40, 200, 80),
     "box": (0, 165, 255),
+    "open_box": (0, 220, 255),
+    "lid": (180, 80, 255),
     "bag": (255, 160, 40),
 }
 
@@ -23,6 +26,14 @@ STATE_COLORS = {
     "near_bag": (255, 180, 0),
     "inserting": (0, 80, 255),
     "put_box_in_bag": (0, 0, 255),
+    "interacting": (0, 200, 220),
+    "opening": (0, 140, 255),
+    "open_box": (0, 90, 255),
+}
+
+BANNER_TEXT = {
+    "put_box_in_bag": "PUT BOX IN BAG",
+    "open_box": "PERSON OPENING BOX",
 }
 
 BUTTON_SIZE = (176, 56)
@@ -57,9 +68,10 @@ def draw(
     frame: np.ndarray,
     tracks: list[Track],
     states: dict[int, PersonState],
-    events: list[PutBoxInBagEvent],
+    events: list,
     banner_frames: int = 0,
     draw_scores: bool = True,
+    opening_states: dict[int, OpeningState] | None = None,
 ) -> np.ndarray:
     canvas = frame.copy()
     for track in tracks:
@@ -71,13 +83,24 @@ def draw(
         label = f"{track.cls} #{track.track_id} {track.conf:.2f}"
         _label(canvas, label, x1, max(0, y1 - 8), color)
 
-        if track.cls == "person" and track.track_id in states:
-            ctx = states[track.track_id]
-            state_color = STATE_COLORS.get(ctx.state, (200, 200, 200))
-            extra = ctx.state
-            if draw_scores and ctx.state != "idle":
-                extra += f" h={ctx.hold_score:.2f} n={ctx.near_score:.2f} i={ctx.insert_score:.2f}"
-            _label(canvas, extra, x1, y2 + 16, state_color)
+        if track.cls == "person":
+            ctx = None
+            extra = ""
+            open_ctx = opening_states.get(track.track_id) if opening_states else None
+            bag_ctx = states.get(track.track_id)
+            if open_ctx is not None and open_ctx.state not in ("idle",):
+                ctx = open_ctx
+                extra = open_ctx.state
+                if draw_scores:
+                    extra += f" i={open_ctx.interact_score:.2f} g={open_ctx.growth:.2f}"
+            elif bag_ctx is not None:
+                ctx = bag_ctx
+                extra = bag_ctx.state
+                if draw_scores and bag_ctx.state != "idle":
+                    extra += f" h={bag_ctx.hold_score:.2f} n={bag_ctx.near_score:.2f} i={bag_ctx.insert_score:.2f}"
+            if ctx is not None:
+                state_color = STATE_COLORS.get(ctx.state, (200, 200, 200))
+                _label(canvas, extra, x1, y2 + 16, state_color)
 
         if len(track.history) >= 2:
             pts = np.array([[int((b[0] + b[2]) / 2), int((b[1] + b[3]) / 2)] for b in track.history], dtype=np.int32)
@@ -85,12 +108,14 @@ def draw(
 
     if events or banner_frames > 0:
         latest = events[-1] if events else None
-        text = "PUT BOX IN BAG"
+        kind = getattr(latest, "event", "put_box_in_bag") if latest is not None else "put_box_in_bag"
+        text = BANNER_TEXT.get(kind, kind.replace("_", " ").upper())
         if latest is not None:
-            text = f"PUT BOX IN BAG  person#{latest.person_id}  ({latest.reason})"
+            text = f"{text}  person#{latest.person_id}  ({latest.reason})"
         overlay = canvas.copy()
         h, w = canvas.shape[:2]
-        cv2.rectangle(overlay, (0, 0), (w, 54), (0, 0, 200), -1)
+        color = (0, 90, 220) if kind == "open_box" else (0, 0, 200)
+        cv2.rectangle(overlay, (0, 0), (w, 54), color, -1)
         canvas = cv2.addWeighted(overlay, 0.45, canvas, 0.55, 0)
         cv2.putText(canvas, text, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
 

@@ -45,6 +45,7 @@ class PutBoxInBagEvent:
     insert_score: float
     containment: float
     reason: str
+    event: str = EVENT
 
     def to_dict(self) -> dict[str, Any]:
         return {

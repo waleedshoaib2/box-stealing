@@ -16,6 +16,7 @@ import yaml
 from src.alerts import Alerter
 from src.detector import YOLODetector
 from src.event_detector import RuleEngine
+from src.opening_detector import OpeningEngine
 from src.recorder import Recorder
 from src.tracker import IoUTracker
 from src.visualizer import WINDOW_NAME, RecordButton, draw, draw_record_button
@@ -53,6 +54,10 @@ class Pipeline:
             max_missed=int(tracker_cfg.get("max_missed", 20)),
         )
         self.engine = RuleEngine.from_config(cfg.get("rules", {}))
+        opening_cfg = cfg.get("opening", {})
+        self.opening: OpeningEngine | None = None
+        if bool(opening_cfg.get("enabled", True)):
+            self.opening = OpeningEngine.from_config(opening_cfg)
         vis = cfg.get("visualizer", {})
         self.show = bool(vis.get("show", True))
         self.write = bool(vis.get("write", True))
@@ -132,7 +137,9 @@ class Pipeline:
                 detections = self.detector.infer(frame)
                 tracks = self.tracker.update(detections)
                 timestamp = frame_idx / fps if fps > 0 else 0.0
-                events = self.engine.update(tracks, frame_idx, timestamp)
+                events = list(self.engine.update(tracks, frame_idx, timestamp))
+                if self.opening is not None:
+                    events.extend(self.opening.update(tracks, frame_idx, timestamp))
                 if events:
                     self._banner = int(max(fps, 15.0) * 2)
 
@@ -143,6 +150,7 @@ class Pipeline:
                     events,
                     banner_frames=self._banner,
                     draw_scores=self.draw_scores,
+                    opening_states=self.opening.states() if self.opening else None,
                 )
                 record_frame = vis if (self.recorder and self.recorder.annotated) else frame
                 if self.recorder is not None:
