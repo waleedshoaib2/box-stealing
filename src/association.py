@@ -102,25 +102,6 @@ def height_growth(current: BBox, baseline_height: float) -> float:
     return (height(current) - baseline_height) / baseline_height
 
 
-def lid_lift_score(box: Track, lid: Track) -> float:
-    """Lid sitting on / lifting off the top of the box."""
-    bx1, by1, bx2, by2 = box.bbox
-    lx, ly = center(lid.bbox)
-    x_overlap = intersection((bx1, by1, bx2, by2), (lid.bbox[0], by1, lid.bbox[2], by2))
-    box_w = max(width(box.bbox), 1.0)
-    horiz = min(1.0, x_overlap / (box_w * height(box.bbox) + 1e-6) * height(box.bbox) / box_w)
-    # Simpler horizontal overlap of x-ranges:
-    overlap_x = max(0.0, min(bx2, lid.bbox[2]) - max(bx1, lid.bbox[0]))
-    horiz = overlap_x / box_w
-    above = ly <= (by1 + by2) / 2.0
-    near_top = abs(lid.bbox[3] - by1) / max(height(box.bbox), 1.0)
-    score = horiz * 0.8
-    if above:
-        score += 0.4
-    score += max(0.0, 0.7 - near_top)
-    return float(score)
-
-
 def best_pair(
     left: list[Track],
     right: list[Track],

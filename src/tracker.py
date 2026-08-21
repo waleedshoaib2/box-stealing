@@ -12,12 +12,11 @@ from typing import Iterable
 from src.geometry import BBox, as_xyxy, iou
 
 
-CANONICAL_CLASSES = ("person", "box", "bag", "open_box", "lid")
+CANONICAL_CLASSES = ("person", "box", "bag", "open_box")
 TRACK_GROUPS: dict[str, tuple[str, ...]] = {
     "person": ("person",),
     "box": ("box", "open_box"),
     "bag": ("bag",),
-    "lid": ("lid",),
 }
 
 

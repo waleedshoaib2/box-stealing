@@ -19,9 +19,6 @@ detector:
       open_box:
         - open cardboard box
         - open box
-      lid:
-        - box lid
-        - cardboard flap
 
 tracker:
   iou_threshold: 0.3
@@ -35,7 +32,6 @@ opening:
   interact_score_threshold: 0.45
   min_interact_frames: 8
   height_growth_threshold: 0.20
-  lid_score_threshold: 0.70
   min_open_frames: 5
   event_cooldown_frames: 60
 

@@ -4,8 +4,7 @@ Causal sequence (required)
 --------------------------
 1. INTERACTING — person is working on a box (hands at the top, or carrying it)
                  for several frames while the box still looks *closed*.
-2. OPENING     — that same box gets taller (flaps up), YOLO flips to open_box,
-                 or a lid lifts off the top.
+2. OPENING     — that same box gets taller (flaps up), or YOLO flips to open_box.
 3. EVENT       — the opening cue holds for min_open_frames.
 
 A box that is already open when the person walks up does not fire: the engine
@@ -17,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.association import height_growth, interact_score, is_open_box, lid_lift_score
+from src.association import height_growth, interact_score, is_open_box
 from src.geometry import height, iou
 from src.tracker import Track
 
@@ -36,7 +35,6 @@ class OpenBoxEvent:
     box_id: int | None
     interact_score: float
     growth: float
-    lid_score: float
     reason: str
     event: str = EVENT
 
@@ -49,7 +47,6 @@ class OpenBoxEvent:
             "box_id": self.box_id,
             "interact_score": round(self.interact_score, 3),
             "growth": round(self.growth, 3),
-            "lid_score": round(self.lid_score, 3),
             "reason": self.reason,
         }
 
@@ -63,7 +60,6 @@ class OpeningState:
     open_frames: int = 0
     interact_score: float = 0.0
     growth: float = 0.0
-    lid_score: float = 0.0
     min_height: float = 1e9
     had_closed: bool = False
     last_box_bbox: tuple[float, float, float, float] | None = None
@@ -76,7 +72,6 @@ class OpeningEngine:
     interact_score_threshold: float = 0.45
     min_interact_frames: int = 8
     height_growth_threshold: float = 0.20
-    lid_score_threshold: float = 0.70
     min_open_frames: int = 5
     event_cooldown_frames: int = 60
     _people: dict[int, OpeningState] = field(default_factory=dict)
@@ -87,7 +82,6 @@ class OpeningEngine:
             "interact_score_threshold",
             "min_interact_frames",
             "height_growth_threshold",
-            "lid_score_threshold",
             "min_open_frames",
             "event_cooldown_frames",
         )
@@ -104,13 +98,12 @@ class OpeningEngine:
     ) -> list[OpenBoxEvent]:
         persons = [t for t in tracks if t.cls == "person" and t.missed == 0]
         boxes = [t for t in tracks if t.cls in ("box", "open_box")]
-        lids = [t for t in tracks if t.cls == "lid" and t.missed == 0]
         events: list[OpenBoxEvent] = []
         live = {p.track_id for p in persons}
 
         for person in persons:
             ctx = self._people.setdefault(person.track_id, OpeningState(person_id=person.track_id))
-            event = self._step(ctx, person, boxes, lids, frame_idx, timestamp)
+            event = self._step(ctx, person, boxes, frame_idx, timestamp)
             if event is not None:
                 events.append(event)
 
@@ -135,7 +128,6 @@ class OpeningEngine:
         ctx: OpeningState,
         person: Track,
         boxes: list[Track],
-        lids: list[Track],
         frame_idx: int,
         timestamp: float,
     ) -> OpenBoxEvent | None:
@@ -155,7 +147,6 @@ class OpeningEngine:
             ctx.min_height = 1e9
             ctx.had_closed = False
             ctx.growth = 0.0
-            ctx.lid_score = 0.0
             ctx.state = IDLE
             return None
 
@@ -169,16 +160,12 @@ class OpeningEngine:
 
         baseline = ctx.min_height if ctx.min_height < 1e8 else height(target.bbox)
         ctx.growth = height_growth(target.bbox, baseline)
-        ctx.lid_score = 0.0
-        if lids:
-            ctx.lid_score = max(lid_lift_score(target, lid) for lid in lids)
 
         long_enough = ctx.interact_frames >= self.min_interact_frames
         grew = ctx.growth >= self.height_growth_threshold
         sees_open = _sees_open_box(target, boxes)
         became_open = sees_open and ctx.had_closed
-        lid_up = ctx.lid_score >= self.lid_score_threshold and ctx.had_closed
-        opening_now = visible and long_enough and ctx.had_closed and (grew or became_open or lid_up)
+        opening_now = visible and long_enough and ctx.had_closed and (grew or became_open)
 
         if opening_now:
             ctx.open_frames += 1
@@ -188,12 +175,7 @@ class OpeningEngine:
             ctx.state = INTERACTING if long_enough else IDLE
 
         if ctx.open_frames >= self.min_open_frames:
-            if sees_open:
-                reason = "open_box_detected"
-            elif grew:
-                reason = "box_grew_open"
-            else:
-                reason = "lid_lifted"
+            reason = "open_box_detected" if sees_open else "box_grew_open"
             return self._emit(ctx, frame_idx, timestamp, reason)
         return None
 
@@ -244,7 +226,6 @@ class OpeningEngine:
             box_id=ctx.box_id,
             interact_score=ctx.interact_score,
             growth=ctx.growth,
-            lid_score=ctx.lid_score,
             reason=reason,
         )
         ctx.box_id = None

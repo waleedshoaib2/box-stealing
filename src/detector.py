@@ -16,7 +16,7 @@ import numpy as np
 from src.tracker import Detection
 
 
-CANONICAL = {"person", "box", "bag", "open_box", "lid"}
+CANONICAL = {"person", "box", "bag", "open_box"}
 
 
 class YOLODetector:
@@ -52,7 +52,7 @@ class YOLODetector:
         label_to_canonical: dict[str, str] = {}
         for canonical, aliases in prompts.items():
             if canonical not in CANONICAL:
-                raise ValueError(f"Prompt group {canonical!r} is not person/box/bag/open_box/lid")
+                raise ValueError(f"Prompt group {canonical!r} is not person/box/bag/open_box")
             for alias in aliases:
                 key = str(alias).strip().lower()
                 if key not in label_to_canonical:
@@ -145,7 +145,7 @@ class YOLODetector:
         if mapped:
             return mapped
         lowered = raw_label.lower()
-        for canonical in ("open_box", "person", "bag", "lid", "box"):
+        for canonical in ("open_box", "person", "bag", "box"):
             token = canonical.replace("_", " ")
             if canonical in lowered or token in lowered:
                 return canonical
@@ -166,4 +166,4 @@ def _load_world_model(weights: str) -> Any:
 def _validate_class_map(class_map: dict[int, str]) -> None:
     unknown = {v for v in class_map.values() if v not in CANONICAL}
     if unknown:
-        raise ValueError(f"class_map values must be person/box/bag/open_box/lid, got {unknown}")
+        raise ValueError(f"class_map values must be person/box/bag/open_box, got {unknown}")

@@ -33,7 +33,6 @@ class AlertFormatTests(unittest.TestCase):
             box_id=9,
             interact_score=1.0,
             growth=0.3,
-            lid_score=0.0,
             reason="open_box_detected",
         )
         self.assertEqual(format_alert(event), "Open box detected — person #4 (open_box_detected)")
