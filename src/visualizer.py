@@ -35,6 +35,14 @@ BANNER_TEXT = {
     "open_box": "PERSON OPENING BOX",
 }
 
+
+def banner_label(event: object | None) -> tuple[str, str]:
+    kind = getattr(event, "event", "") if event is not None else ""
+    text = BANNER_TEXT.get(kind, kind.replace("_", " ").upper() if kind else "ALERT")
+    if event is not None:
+        text = f"{text}  person#{event.person_id}  ({event.reason})"
+    return kind, text
+
 BUTTON_SIZE = (176, 56)
 BUTTON_MARGIN = 16
 
@@ -71,6 +79,7 @@ def draw(
     banner_frames: int = 0,
     draw_scores: bool = True,
     opening_states: dict[int, OpeningState] | None = None,
+    last_event: object | None = None,
 ) -> np.ndarray:
     canvas = frame.copy()
     for track in tracks:
@@ -105,12 +114,9 @@ def draw(
             pts = np.array([[int((b[0] + b[2]) / 2), int((b[1] + b[3]) / 2)] for b in track.history], dtype=np.int32)
             cv2.polylines(canvas, [pts], False, color, 1)
 
-    if events or banner_frames > 0:
-        latest = events[-1] if events else None
-        kind = getattr(latest, "event", "put_box_in_bag") if latest is not None else "put_box_in_bag"
-        text = BANNER_TEXT.get(kind, kind.replace("_", " ").upper())
-        if latest is not None:
-            text = f"{text}  person#{latest.person_id}  ({latest.reason})"
+    latest = events[-1] if events else last_event
+    if latest is not None or banner_frames > 0:
+        kind, text = banner_label(latest)
         overlay = canvas.copy()
         h, w = canvas.shape[:2]
         color = (0, 90, 220) if kind == "open_box" else (0, 0, 200)

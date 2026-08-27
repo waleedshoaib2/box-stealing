@@ -71,6 +71,7 @@ class Pipeline:
         self._recorder_cfg = cfg.get("recorder", {})
         self.recorder: Recorder | None = None
         self._banner = 0
+        self._banner_event = None
 
     def run(self, source: str | int | None = None, output_name: str = "annotated") -> list[dict[str, Any]]:
         src_cfg = self.cfg.get("source", {})
@@ -154,6 +155,7 @@ class Pipeline:
                     events.extend(self.opening.update(tracks, frame_idx, timestamp))
                 if events:
                     self._banner = int(max(fps, 15.0) * 2)
+                    self._banner_event = events[-1]
 
                 vis = draw(
                     frame,
@@ -163,6 +165,7 @@ class Pipeline:
                     banner_frames=self._banner,
                     draw_scores=self.draw_scores,
                     opening_states=self.opening.states() if self.opening else None,
+                    last_event=self._banner_event,
                 )
                 record_frame = vis if (self.recorder and self.recorder.annotated) else frame
                 if self.recorder is not None:
@@ -185,6 +188,8 @@ class Pipeline:
 
                 if self._banner > 0:
                     self._banner -= 1
+                    if self._banner <= 0:
+                        self._banner_event = None
                 if writer is not None:
                     writer.write(vis)
                 if self.show:
