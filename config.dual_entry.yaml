@@ -1,4 +1,4 @@
-# Person opening a box — standalone (no bag-in-box rules)
+# Dual entry — person takes a parcel out, then comes back for another
 
 detector:
   mode: yolo_world
@@ -16,27 +16,27 @@ detector:
         - cardboard box
         - box
         - package
-      open_box:
-        - open cardboard box
-        - open box
+        - parcel
 
 tracker:
   iou_threshold: 0.3
   max_missed: 20
 
 rules:
-  enabled: false              # bag-in-box stays off in this config
+  enabled: false
 
 opening:
-  enabled: true
-  interact_score_threshold: 0.45
-  min_interact_frames: 8
-  height_growth_threshold: 0.20
-  min_open_frames: 5
-  event_cooldown_frames: 60
+  enabled: false
 
 dual_entry:
-  enabled: false
+  enabled: true
+  hold_score_threshold: 0.50
+  min_hold_frames: 10
+  min_present_frames: 8
+  exit_confirm_frames: 45
+  exit_confirm_seconds: 1.5
+  reentry_window_seconds: 180
+  event_cooldown_frames: 180
 
 alerts:
   enabled: true
@@ -62,7 +62,7 @@ visualizer:
   output_dir: outputs
   draw_scores: true
   trail_length: 20
-  window_name: open-box
+  window_name: dual-entry
 
 source:
   path: rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101/

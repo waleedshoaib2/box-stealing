@@ -10,6 +10,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from src.dual_entry import DualEntryEvent
 from src.event_detector import PutBoxInBagEvent
 from src.opening_detector import OpenBoxEvent
 
@@ -71,7 +72,7 @@ class Recorder:
         if self.continuous:
             self._write_segment(copied)
 
-    def trigger(self, event: PutBoxInBagEvent | OpenBoxEvent) -> Path | None:
+    def trigger(self, event: PutBoxInBagEvent | OpenBoxEvent | DualEntryEvent) -> Path | None:
         if not self.enabled or not self.event_clips:
             return None
         if self._clip_writer is not None:

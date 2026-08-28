@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from src.alerts import _webhook_body, format_alert
+from src.dual_entry import DualEntryEvent
 from src.event_detector import PutBoxInBagEvent
 from src.opening_detector import OpenBoxEvent
 
@@ -36,6 +37,22 @@ class AlertFormatTests(unittest.TestCase):
             reason="open_box_detected",
         )
         self.assertEqual(format_alert(event), "Open box detected — person #4 (open_box_detected)")
+
+    def test_dual_entry_message(self) -> None:
+        event = DualEntryEvent(
+            frame_idx=20,
+            timestamp=1.0,
+            person_id=3,
+            box_id=8,
+            visit=2,
+            takeaways=1,
+            hold_score=0.8,
+            reason="second_pickup",
+        )
+        text = format_alert(event)
+        self.assertIn("Dual entry", text)
+        self.assertIn("person #3", text)
+        self.assertIn("second_pickup", text)
 
     def test_message_includes_ids(self) -> None:
         text = format_alert(_event())

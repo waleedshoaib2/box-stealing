@@ -15,11 +15,46 @@ import yaml
 
 from src.alerts import Alerter
 from src.detector import YOLODetector
+from src.dual_entry import DualEntryEngine
 from src.event_detector import RuleEngine
 from src.opening_detector import OpeningEngine
 from src.recorder import Recorder
 from src.tracker import IoUTracker
 from src.visualizer import WINDOW_NAME, RecordButton, draw, draw_record_button
+
+
+TASK_LABELS = {
+    "bag": "Put box in the bag",
+    "dual_entry": "Leaving and entering with packages",
+    "open": "Opening packages",
+}
+
+
+def apply_task_to_cfg(cfg: dict[str, Any], task: str) -> dict[str, Any]:
+    """Enable exactly one behavior (or both bag+open). Mutates cfg and returns it."""
+    vis = cfg.setdefault("visualizer", {})
+    if task == "bag":
+        cfg.setdefault("rules", {})["enabled"] = True
+        cfg.setdefault("opening", {})["enabled"] = False
+        cfg.setdefault("dual_entry", {})["enabled"] = False
+        vis["window_name"] = "put-box-in-bag"
+    elif task == "open":
+        cfg.setdefault("rules", {})["enabled"] = False
+        cfg.setdefault("opening", {})["enabled"] = True
+        cfg.setdefault("dual_entry", {})["enabled"] = False
+        vis["window_name"] = "open-box"
+    elif task == "dual_entry":
+        cfg.setdefault("rules", {})["enabled"] = False
+        cfg.setdefault("opening", {})["enabled"] = False
+        cfg.setdefault("dual_entry", {})["enabled"] = True
+        vis["window_name"] = "dual-entry"
+    elif task == "both":
+        cfg.setdefault("rules", {})["enabled"] = True
+        cfg.setdefault("opening", {})["enabled"] = True
+        cfg.setdefault("dual_entry", {})["enabled"] = False
+    else:
+        raise ValueError(f"Unknown task {task!r}")
+    return cfg
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -61,6 +96,10 @@ class Pipeline:
         self.opening: OpeningEngine | None = None
         if bool(opening_cfg.get("enabled", True)):
             self.opening = OpeningEngine.from_config(opening_cfg)
+        dual_cfg = cfg.get("dual_entry", {})
+        self.dual: DualEntryEngine | None = None
+        if bool(dual_cfg.get("enabled", False)):
+            self.dual = DualEntryEngine.from_config(dual_cfg)
         vis = cfg.get("visualizer", {})
         self.show = bool(vis.get("show", True))
         self.write = bool(vis.get("write", True))
@@ -72,6 +111,83 @@ class Pipeline:
         self.recorder: Recorder | None = None
         self._banner = 0
         self._banner_event = None
+        self.task = self._active_task_name()
+
+    def _active_task_name(self) -> str:
+        if self.dual is not None:
+            return "dual_entry"
+        if self.opening is not None and self.engine is None:
+            return "open"
+        if self.engine is not None and self.opening is None:
+            return "bag"
+        if self.engine is not None and self.opening is not None:
+            return "both"
+        return "bag"
+
+    def apply_task(self, task: str) -> None:
+        apply_task_to_cfg(self.cfg, task)
+        self.window_name = str(self.cfg.get("visualizer", {}).get("window_name") or WINDOW_NAME)
+        self.task = task
+        self.reset_tracking()
+
+    def reset_tracking(self) -> None:
+        tracker_cfg = self.cfg.get("tracker", {})
+        self.tracker = IoUTracker(
+            iou_threshold=float(tracker_cfg.get("iou_threshold", 0.3)),
+            max_missed=int(tracker_cfg.get("max_missed", 20)),
+        )
+        rules_cfg = self.cfg.get("rules", {})
+        self.engine = RuleEngine.from_config(rules_cfg) if bool(rules_cfg.get("enabled")) else None
+        opening_cfg = self.cfg.get("opening", {})
+        self.opening = OpeningEngine.from_config(opening_cfg) if bool(opening_cfg.get("enabled")) else None
+        dual_cfg = self.cfg.get("dual_entry", {})
+        self.dual = DualEntryEngine.from_config(dual_cfg) if bool(dual_cfg.get("enabled")) else None
+        self._banner = 0
+        self._banner_event = None
+        if self.alerter is not None:
+            self.alerter._last_fire = 0.0
+
+    def process_frame(self, frame: Any, frame_idx: int, fps: float) -> tuple[Any, list]:
+        detections = self.detector.infer(frame)
+        tracks = self.tracker.update(detections)
+        timestamp = frame_idx / fps if fps > 0 else 0.0
+        events = []
+        if self.engine is not None:
+            events.extend(self.engine.update(tracks, frame_idx, timestamp))
+        if self.opening is not None:
+            events.extend(self.opening.update(tracks, frame_idx, timestamp))
+        if self.dual is not None:
+            events.extend(self.dual.update(tracks, frame_idx, timestamp))
+        if events:
+            self._banner = int(max(fps, 15.0) * 2)
+            self._banner_event = events[-1]
+
+        vis = draw(
+            frame,
+            tracks,
+            self.engine.states() if self.engine else {},
+            events,
+            banner_frames=self._banner,
+            draw_scores=self.draw_scores,
+            opening_states=self.opening.states() if self.opening else None,
+            dual_states=self.dual.states() if self.dual else None,
+            status_line=self.dual.status_line() if self.dual else None,
+            last_event=self._banner_event,
+        )
+        record_frame = vis if (self.recorder and self.recorder.annotated) else frame
+        if self.recorder is not None:
+            self.recorder.push(record_frame)
+        clip_path = None
+        if events and self.recorder is not None:
+            clip_path = self.recorder.trigger(events[0])
+        extras = {"clip": str(clip_path)} if clip_path else None
+        for event in events:
+            self.alerter.notify(event, vis, extras=extras)
+        if self._banner > 0:
+            self._banner -= 1
+            if self._banner <= 0:
+                self._banner_event = None
+        return vis, events
 
     def run(self, source: str | int | None = None, output_name: str = "annotated") -> list[dict[str, Any]]:
         src_cfg = self.cfg.get("source", {})
@@ -122,6 +238,8 @@ class Pipeline:
             mode.append("put-box-in-bag")
         if self.opening is not None:
             mode.append("open-box")
+        if self.dual is not None:
+            mode.append("dual-entry")
         print("Mode: " + (" + ".join(mode) if mode else "detect only"))
         print("Running. Click REC or press R to record. Press q to quit.")
         try:
@@ -145,51 +263,16 @@ class Pipeline:
                 if frame.shape[1] != width or frame.shape[0] != height:
                     frame = cv2.resize(frame, (width, height))
 
-                detections = self.detector.infer(frame)
-                tracks = self.tracker.update(detections)
-                timestamp = frame_idx / fps if fps > 0 else 0.0
-                events = []
-                if self.engine is not None:
-                    events.extend(self.engine.update(tracks, frame_idx, timestamp))
-                if self.opening is not None:
-                    events.extend(self.opening.update(tracks, frame_idx, timestamp))
-                if events:
-                    self._banner = int(max(fps, 15.0) * 2)
-                    self._banner_event = events[-1]
-
-                vis = draw(
-                    frame,
-                    tracks,
-                    self.engine.states() if self.engine else {},
-                    events,
-                    banner_frames=self._banner,
-                    draw_scores=self.draw_scores,
-                    opening_states=self.opening.states() if self.opening else None,
-                    last_event=self._banner_event,
-                )
-                record_frame = vis if (self.recorder and self.recorder.annotated) else frame
-                if self.recorder is not None:
-                    self.recorder.push(record_frame)
-
-                clip_path = None
-                if events and self.recorder is not None:
-                    clip_path = self.recorder.trigger(events[0])
-                extras = {"clip": str(clip_path)} if clip_path else None
+                vis, events = self.process_frame(frame, frame_idx, fps)
                 for event in events:
                     payload = event.to_dict()
-                    if clip_path is not None:
-                        payload["clip"] = str(clip_path)
+                    if self.recorder is not None and self.recorder._clip_path is not None:
+                        payload["clip"] = str(self.recorder._clip_path)
                     events_log.append(payload)
                     print(json.dumps(payload))
                     if events_path is not None:
                         with events_path.open("a", encoding="utf-8") as handle:
                             handle.write(json.dumps(payload) + "\n")
-                    self.alerter.notify(event, vis, extras=extras)
-
-                if self._banner > 0:
-                    self._banner -= 1
-                    if self._banner <= 0:
-                        self._banner_event = None
                 if writer is not None:
                     writer.write(vis)
                 if self.show:

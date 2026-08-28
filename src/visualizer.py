@@ -5,6 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from src.dual_entry import DualPersonState
 from src.event_detector import PersonState
 from src.opening_detector import OpeningState
 from src.tracker import Track
@@ -28,11 +29,23 @@ STATE_COLORS = {
     "interacting": (0, 200, 220),
     "opening": (0, 140, 255),
     "open_box": (0, 90, 255),
+    "entered": (40, 200, 80),
+    "carrying": (0, 165, 255),
+    "exited": (180, 180, 180),
+    "reentered": (0, 180, 255),
+    "dual_entry": (0, 0, 255),
 }
 
 BANNER_TEXT = {
     "put_box_in_bag": "PUT BOX IN BAG",
     "open_box": "PERSON OPENING BOX",
+    "dual_entry": "DUAL ENTRY",
+}
+
+BANNER_COLORS = {
+    "open_box": (0, 90, 220),
+    "dual_entry": (0, 0, 255),
+    "put_box_in_bag": (0, 0, 200),
 }
 
 
@@ -79,6 +92,8 @@ def draw(
     banner_frames: int = 0,
     draw_scores: bool = True,
     opening_states: dict[int, OpeningState] | None = None,
+    dual_states: dict[int, DualPersonState] | None = None,
+    status_line: str | None = None,
     last_event: object | None = None,
 ) -> np.ndarray:
     canvas = frame.copy()
@@ -95,12 +110,18 @@ def draw(
             ctx = None
             extra = ""
             open_ctx = opening_states.get(track.track_id) if opening_states else None
+            dual_ctx = dual_states.get(track.track_id) if dual_states else None
             bag_ctx = states.get(track.track_id)
             if open_ctx is not None and open_ctx.state not in ("idle",):
                 ctx = open_ctx
                 extra = open_ctx.state
                 if draw_scores:
                     extra += f" i={open_ctx.interact_score:.2f} g={open_ctx.growth:.2f}"
+            elif dual_ctx is not None and dual_ctx.state not in ("idle",):
+                ctx = dual_ctx
+                extra = dual_ctx.state
+                if draw_scores:
+                    extra += f" v={dual_ctx.visit} t={dual_ctx.takeaways} h={dual_ctx.hold_score:.2f}"
             elif bag_ctx is not None:
                 ctx = bag_ctx
                 extra = bag_ctx.state
@@ -119,10 +140,26 @@ def draw(
         kind, text = banner_label(latest)
         overlay = canvas.copy()
         h, w = canvas.shape[:2]
-        color = (0, 90, 220) if kind == "open_box" else (0, 0, 200)
+        color = BANNER_COLORS.get(kind, (0, 0, 200))
         cv2.rectangle(overlay, (0, 0), (w, 54), color, -1)
         canvas = cv2.addWeighted(overlay, 0.45, canvas, 0.55, 0)
         cv2.putText(canvas, text, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
+
+    if status_line:
+        h, w = canvas.shape[:2]
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (0, h - 36), (w, h), (20, 20, 20), -1)
+        canvas = cv2.addWeighted(overlay, 0.45, canvas, 0.55, 0)
+        cv2.putText(
+            canvas,
+            status_line,
+            (16, h - 12),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (230, 230, 230),
+            1,
+            cv2.LINE_AA,
+        )
 
     return canvas
 

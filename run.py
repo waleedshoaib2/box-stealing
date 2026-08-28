@@ -25,13 +25,18 @@ import argparse
 
 from src.alerts import Alerter
 from src.event_detector import PutBoxInBagEvent
-from src.pipeline import Pipeline, load_config, output_name_for
+from src.pipeline import Pipeline, apply_task_to_cfg, load_config, output_name_for
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Rule-based: person puts a box in a bag")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
-    parser.add_argument("--task", choices=["bag", "open", "both"], default=None, help="bag = put-box-in-bag, open = person opening a box")
+    parser.add_argument(
+        "--task",
+        choices=["bag", "open", "both", "dual_entry"],
+        default=None,
+        help="bag = put-box-in-bag, open = person opening a box, dual_entry = take parcel / leave / come back",
+    )
     parser.add_argument("--source", default=None, help="Webcam index, video path, image path, or RTSP URL")
     parser.add_argument("--mode", choices=["yolo_world", "custom", "dual"], default=None)
     parser.add_argument("--person-model", default=None, help="Person YOLO weights (dual mode)")
@@ -50,18 +55,11 @@ def main() -> None:
     args = parse_args()
     if args.task == "open" and args.config == "config.yaml":
         args.config = "config.open.yaml"
+    if args.task == "dual_entry" and args.config == "config.yaml":
+        args.config = "config.dual_entry.yaml"
     cfg = load_config(args.config)
-
-    if args.task == "bag":
-        cfg.setdefault("rules", {})["enabled"] = True
-        cfg.setdefault("opening", {})["enabled"] = False
-    elif args.task == "open":
-        cfg.setdefault("rules", {})["enabled"] = False
-        cfg.setdefault("opening", {})["enabled"] = True
-        cfg.setdefault("visualizer", {})["window_name"] = "open-box"
-    elif args.task == "both":
-        cfg.setdefault("rules", {})["enabled"] = True
-        cfg.setdefault("opening", {})["enabled"] = True
+    if args.task:
+        apply_task_to_cfg(cfg, args.task)
 
     if args.mode:
         cfg["detector"]["mode"] = args.mode

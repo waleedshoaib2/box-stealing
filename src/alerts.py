@@ -22,8 +22,11 @@ from urllib.request import Request, urlopen
 import cv2
 import numpy as np
 
+from src.dual_entry import DualEntryEvent
 from src.event_detector import PutBoxInBagEvent
 from src.opening_detector import OpenBoxEvent
+
+AlertEvent = PutBoxInBagEvent | OpenBoxEvent | DualEntryEvent
 
 
 class Alerter:
@@ -40,7 +43,7 @@ class Alerter:
 
     def notify(
         self,
-        event: PutBoxInBagEvent | OpenBoxEvent,
+        event: AlertEvent,
         frame: np.ndarray | None,
         extras: dict[str, Any] | None = None,
     ) -> Path | None:
@@ -75,7 +78,7 @@ class Alerter:
             ).start()
         return snapshot_path
 
-    def _write_snapshot(self, event: PutBoxInBagEvent | OpenBoxEvent, frame: np.ndarray | None) -> Path | None:
+    def _write_snapshot(self, event: AlertEvent, frame: np.ndarray | None) -> Path | None:
         if not self.save_snapshot or frame is None:
             return None
         self.alert_dir.mkdir(parents=True, exist_ok=True)
@@ -86,11 +89,16 @@ class Alerter:
         return path
 
 
-def format_alert(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
+def format_alert(event: AlertEvent) -> str:
     kind = getattr(event, "event", "")
     box = f"box#{event.box_id}" if event.box_id is not None else "box"
     if kind == "open_box":
         return f"Open box detected — person #{event.person_id} ({event.reason})"
+    if kind == "dual_entry":
+        return (
+            f"Dual entry — person #{event.person_id} picked a second parcel "
+            f"(visit {getattr(event, 'visit', 0)}, takeaways {getattr(event, 'takeaways', 0)}, {event.reason})"
+        )
     bag = f"bag#{getattr(event, 'bag_id', None)}" if getattr(event, "bag_id", None) is not None else "bag"
     insert = getattr(event, "insert_score", 0.0)
     return (
@@ -99,15 +107,21 @@ def format_alert(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
     )
 
 
-def alert_title(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
-    if getattr(event, "event", "") == "open_box":
+def alert_title(event: AlertEvent) -> str:
+    kind = getattr(event, "event", "")
+    if kind == "open_box":
         return "Open box"
+    if kind == "dual_entry":
+        return "Dual entry"
     return "Box in bag"
 
 
-def desktop_message(event: PutBoxInBagEvent | OpenBoxEvent) -> str:
-    if getattr(event, "event", "") == "open_box":
+def desktop_message(event: AlertEvent) -> str:
+    kind = getattr(event, "event", "")
+    if kind == "open_box":
         return "Open box detected"
+    if kind == "dual_entry":
+        return "Dual entry detected"
     return format_alert(event)
 
 

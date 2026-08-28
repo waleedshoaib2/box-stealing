@@ -24,6 +24,24 @@ class BannerTests(unittest.TestCase):
         self.assertTrue(text.startswith("PERSON OPENING BOX"))
         self.assertIn("person#7", text)
 
+    def test_dual_entry_banner(self) -> None:
+        from src.dual_entry import DualEntryEvent
+
+        event = DualEntryEvent(
+            frame_idx=10,
+            timestamp=1.0,
+            person_id=2,
+            box_id=5,
+            visit=2,
+            takeaways=1,
+            hold_score=0.7,
+            reason="second_pickup",
+        )
+        kind, text = banner_label(event)
+        self.assertEqual(kind, "dual_entry")
+        self.assertTrue(text.startswith("DUAL ENTRY"))
+        self.assertIn("person#2", text)
+
     def test_empty_banner_is_not_put_box_in_bag(self) -> None:
         kind, text = banner_label(None)
         self.assertEqual(kind, "")

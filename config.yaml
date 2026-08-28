@@ -20,7 +20,7 @@ detector:
       box:
         - cardboard box
         - box
-        - package
+        - parcel
       bag:
         - shopping bag
         - bag
@@ -77,6 +77,16 @@ opening:
   height_growth_threshold: 0.20   # box must grow 20% vs closed baseline
   min_open_frames: 5
   event_cooldown_frames: 60
+
+dual_entry:
+  enabled: false              # take a parcel, leave, come back for another — config.dual_entry.yaml
+  hold_score_threshold: 0.50
+  min_hold_frames: 10
+  min_present_frames: 8
+  exit_confirm_frames: 45     # person must be gone this long to count as left
+  exit_confirm_seconds: 1.5   # extra: ignore brief detector dropouts
+  reentry_window_seconds: 180
+  event_cooldown_frames: 180
 
 alerts:
   enabled: true
