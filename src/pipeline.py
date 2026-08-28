@@ -19,6 +19,7 @@ from src.dual_entry import DualEntryEngine
 from src.event_detector import RuleEngine
 from src.opening_detector import OpeningEngine
 from src.recorder import Recorder
+from src.roi import DEFAULT_ROI_CLASSES, filter_detections, parse_roi
 from src.tracker import IoUTracker
 from src.visualizer import WINDOW_NAME, RecordButton, draw, draw_record_button
 
@@ -29,10 +30,37 @@ TASK_LABELS = {
     "open": "Opening packages",
 }
 
+# YOLO-World text prompts per behavior. Dual entry only looks at person + parcel.
+TASK_PROMPTS: dict[str, dict[str, list[str]]] = {
+    "bag": {
+        "person": ["person"],
+        "box": ["cardboard box", "box", "package"],
+        "bag": ["shopping bag", "bag", "backpack", "handbag", "plastic bag"],
+    },
+    "open": {
+        "person": ["person"],
+        "box": ["cardboard box", "box", "package"],
+        "open_box": ["open cardboard box", "open box"],
+    },
+    "dual_entry": {
+        "person": ["person"],
+        "box": ["cardboard box", "box", "package", "parcel"],
+    },
+    "both": {
+        "person": ["person"],
+        "box": ["cardboard box", "box", "package"],
+        "bag": ["shopping bag", "bag", "backpack", "handbag", "plastic bag"],
+        "open_box": ["open cardboard box", "open box"],
+    },
+}
+
 
 def apply_task_to_cfg(cfg: dict[str, Any], task: str) -> dict[str, Any]:
     """Enable exactly one behavior (or both bag+open). Mutates cfg and returns it."""
     vis = cfg.setdefault("visualizer", {})
+    prompts = TASK_PROMPTS.get(task)
+    if prompts is not None:
+        cfg.setdefault("detector", {}).setdefault("yolo_world", {})["prompts"] = prompts
     if task == "bag":
         cfg.setdefault("rules", {})["enabled"] = True
         cfg.setdefault("opening", {})["enabled"] = False
@@ -112,6 +140,9 @@ class Pipeline:
         self._banner = 0
         self._banner_event = None
         self.task = self._active_task_name()
+        roi_cfg = cfg.get("roi") or {}
+        self.roi_norm = parse_roi(roi_cfg.get("xyxy")) if bool(roi_cfg.get("enabled")) else None
+        self.roi_classes = tuple(roi_cfg.get("classes") or DEFAULT_ROI_CLASSES)
 
     def _active_task_name(self) -> str:
         if self.dual is not None:
@@ -128,6 +159,9 @@ class Pipeline:
         apply_task_to_cfg(self.cfg, task)
         self.window_name = str(self.cfg.get("visualizer", {}).get("window_name") or WINDOW_NAME)
         self.task = task
+        prompts = self.cfg.get("detector", {}).get("yolo_world", {}).get("prompts")
+        if prompts:
+            self.detector.set_prompts(prompts)
         self.reset_tracking()
 
     def reset_tracking(self) -> None:
@@ -147,8 +181,16 @@ class Pipeline:
         if self.alerter is not None:
             self.alerter._last_fire = 0.0
 
+    def set_roi(self, xyxy_norm: tuple[float, float, float, float] | None) -> None:
+        self.roi_norm = parse_roi(xyxy_norm)
+        self.cfg.setdefault("roi", {})["enabled"] = self.roi_norm is not None
+        self.cfg.setdefault("roi", {})["xyxy"] = list(self.roi_norm) if self.roi_norm else []
+        self.reset_tracking()
+
     def process_frame(self, frame: Any, frame_idx: int, fps: float) -> tuple[Any, list]:
         detections = self.detector.infer(frame)
+        height, width = frame.shape[:2]
+        detections = filter_detections(detections, self.roi_norm, (width, height), self.roi_classes)
         tracks = self.tracker.update(detections)
         timestamp = frame_idx / fps if fps > 0 else 0.0
         events = []
@@ -173,6 +215,7 @@ class Pipeline:
             dual_states=self.dual.states() if self.dual else None,
             status_line=self.dual.status_line() if self.dual else None,
             last_event=self._banner_event,
+            roi_norm=self.roi_norm,
         )
         record_frame = vis if (self.recorder and self.recorder.annotated) else frame
         if self.recorder is not None:

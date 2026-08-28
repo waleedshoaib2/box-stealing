@@ -27,6 +27,8 @@ class DualEntryEngineTests(unittest.TestCase):
         self.engine = DualEntryEngine(
             hold_score_threshold=0.50,
             min_hold_frames=5,
+            interact_score_threshold=0.45,
+            min_interact_frames=5,
             min_present_frames=3,
             exit_confirm_frames=4,
             exit_confirm_seconds=0.0,
@@ -86,7 +88,28 @@ class DualEntryEngineTests(unittest.TestCase):
             frames.append([])
         self.assertEqual(self._run(frames), [])
         self.assertEqual(self.engine.takeaways, 1)
+        self.assertGreaterEqual(self.engine.carries, 1)
         self.assertEqual(self.engine.state, "exited")
+
+    def test_interacting_increments_interact_counter_not_takeaways(self) -> None:
+        # Box in front of the person, not held in the torso.
+        table_box = (230.0, 250.0, 310.0, 330.0)
+        frames: list[list[Track]] = []
+        for _ in range(10):
+            frames.append([person_track(1, PERSON), box_track(2, table_box)])
+        self.assertEqual(self._run(frames), [])
+        self.assertGreaterEqual(self.engine.interactions, 1)
+        self.assertEqual(self.engine.takeaways, 0)
+        self.assertIn(self.engine.state, {"interacting", "carrying", "entered"})
+
+    def test_carrying_increments_carry_counter(self) -> None:
+        frames: list[list[Track]] = []
+        for _ in range(8):
+            frames.append([person_track(1, PERSON), box_track(2, HELD_BOX)])
+        self.assertEqual(self._run(frames), [])
+        self.assertGreaterEqual(self.engine.carries, 1)
+        self.assertEqual(self.engine.takeaways, 0)
+        self.assertEqual(self.engine.state, "carrying")
 
     def test_reentry_outside_window_resets(self) -> None:
         frames: list[list[Track]] = []
@@ -108,6 +131,8 @@ class DualEntryEngineTests(unittest.TestCase):
         engine = DualEntryEngine(
             hold_score_threshold=0.50,
             min_hold_frames=5,
+            interact_score_threshold=0.45,
+            min_interact_frames=5,
             min_present_frames=3,
             exit_confirm_frames=2,
             exit_confirm_seconds=1.0,

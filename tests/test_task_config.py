@@ -31,6 +31,24 @@ class TaskConfigTests(unittest.TestCase):
         self.assertFalse(cfg["opening"]["enabled"])
         self.assertTrue(cfg["dual_entry"]["enabled"])
 
+    def test_dual_entry_prompts_are_person_and_parcel_only(self) -> None:
+        cfg = apply_task_to_cfg({}, "dual_entry")
+        prompts = cfg["detector"]["yolo_world"]["prompts"]
+        self.assertEqual(set(prompts), {"person", "box"})
+        self.assertIn("parcel", prompts["box"])
+        self.assertNotIn("bag", prompts)
+        self.assertNotIn("open_box", prompts)
+
+    def test_open_prompts_include_open_box_not_bag(self) -> None:
+        cfg = apply_task_to_cfg({}, "open")
+        self.assertIn("open_box", cfg["detector"]["yolo_world"]["prompts"])
+        self.assertNotIn("bag", cfg["detector"]["yolo_world"]["prompts"])
+
+    def test_bag_prompts_include_bag_not_open_box(self) -> None:
+        cfg = apply_task_to_cfg({}, "bag")
+        self.assertIn("bag", cfg["detector"]["yolo_world"]["prompts"])
+        self.assertNotIn("open_box", cfg["detector"]["yolo_world"]["prompts"])
+
 
 if __name__ == "__main__":
     unittest.main()

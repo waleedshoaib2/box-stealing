@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 
 import cv2
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QColor, QImage, QPixmap
+from PyQt6.QtCore import QPoint, QRect, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QCloseEvent, QColor, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -54,6 +54,7 @@ class StreamWorker(QThread):
     event_ready = pyqtSignal(dict, str, str)
     status = pyqtSignal(str)
     fps_ready = pyqtSignal(float)
+    stats_ready = pyqtSignal(str)
     failed = pyqtSignal(str)
     recording_changed = pyqtSignal(bool)
     pipeline_ready = pyqtSignal()
@@ -67,6 +68,8 @@ class StreamWorker(QThread):
         self._stop = False
         self._pending_task: str | None = None
         self._toggle_record = False
+        self._pending_roi: tuple[float, float, float, float] | None = None
+        self._roi_update = False
 
     def stop(self) -> None:
         self._stop = True
@@ -76,6 +79,10 @@ class StreamWorker(QThread):
 
     def request_record_toggle(self) -> None:
         self._toggle_record = True
+
+    def request_roi(self, roi: tuple[float, float, float, float] | None) -> None:
+        self._pending_roi = roi
+        self._roi_update = True
 
     def run(self) -> None:
         try:
@@ -128,6 +135,10 @@ class StreamWorker(QThread):
                     self._pending_task = None
                     self.pipeline.apply_task(self.task)
                     self.status.emit(f"Behavior: {TASK_LABELS.get(self.task, self.task)}")
+                if self._roi_update:
+                    self._roi_update = False
+                    self.pipeline.set_roi(self._pending_roi)
+                    self.status.emit("ROI updated" if self._pending_roi else "ROI cleared")
                 if self._toggle_record:
                     self._toggle_record = False
                     if self.pipeline.recorder is not None:
@@ -153,6 +164,8 @@ class StreamWorker(QThread):
 
                 vis, events = self.pipeline.process_frame(frame, frame_idx, fps)
                 self.frame_ready.emit(vis)
+                if self.pipeline.dual is not None:
+                    self.stats_ready.emit(self.pipeline.dual.status_line())
                 for event in events:
                     payload = event.to_dict()
                     if self.pipeline.recorder is not None and self.pipeline.recorder._clip_path is not None:
@@ -178,6 +191,8 @@ class StreamWorker(QThread):
 
 
 class VideoView(QLabel):
+    roi_drawn = pyqtSignal(tuple)
+
     def __init__(self) -> None:
         super().__init__()
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -185,6 +200,17 @@ class VideoView(QLabel):
         self.setText("Connect to the camera to start live annotation")
         self.setObjectName("videoView")
         self._pixmap: QPixmap | None = None
+        self._drawing = False
+        self._drag_origin: QPoint | None = None
+        self._drag_current: QPoint | None = None
+
+    def set_drawing(self, enabled: bool) -> None:
+        self._drawing = enabled
+        self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
+        if not enabled:
+            self._drag_origin = None
+            self._drag_current = None
+            self.update()
 
     def set_bgr_frame(self, frame) -> None:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -196,6 +222,65 @@ class VideoView(QLabel):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._rescale()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if not self._drawing or event.button() != Qt.MouseButton.LeftButton:
+            return
+        self._drag_origin = event.position().toPoint()
+        self._drag_current = self._drag_origin
+        self.update()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._drag_origin is None:
+            return
+        self._drag_current = event.position().toPoint()
+        self.update()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._drag_origin is None:
+            return
+        end = event.position().toPoint()
+        start = self._drag_origin
+        self._drag_origin = None
+        self._drag_current = None
+        self.update()
+        n1 = self._widget_to_norm(start)
+        n2 = self._widget_to_norm(end)
+        if n1 is None or n2 is None:
+            return
+        x1, x2 = sorted((n1[0], n2[0]))
+        y1, y2 = sorted((n1[1], n2[1]))
+        if x2 - x1 < 0.03 or y2 - y1 < 0.03:
+            return
+        self.roi_drawn.emit((x1, y1, x2, y2))
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self._drag_origin is None or self._drag_current is None:
+            return
+        painter = QPainter(self)
+        painter.setPen(QPen(QColor(40, 200, 255), 2))
+        painter.setBrush(QColor(40, 200, 255, 40))
+        painter.drawRect(QRect(self._drag_origin, self._drag_current).normalized())
+
+    def _content_rect(self) -> QRect | None:
+        if self._pixmap is None:
+            return None
+        scaled = self._pixmap.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+        x = (self.width() - scaled.width()) // 2
+        y = (self.height() - scaled.height()) // 2
+        return QRect(x, y, scaled.width(), scaled.height())
+
+    def _widget_to_norm(self, pos: QPoint) -> tuple[float, float] | None:
+        rect = self._content_rect()
+        if rect is None or rect.width() <= 0 or rect.height() <= 0:
+            return None
+        x = (pos.x() - rect.x()) / rect.width()
+        y = (pos.y() - rect.y()) / rect.height()
+        if x < 0.0 or x > 1.0 or y < 0.0 or y > 1.0:
+            x = min(max(x, 0.0), 1.0)
+            y = min(max(y, 0.0), 1.0)
+        return (x, y)
 
     def _rescale(self) -> None:
         if self._pixmap is None:
@@ -271,6 +356,24 @@ class MonitorWindow(QMainWindow):
         source_layout.addLayout(btns)
         side.addWidget(source_box)
 
+        roi_box = QGroupBox("Region of interest")
+        roi_layout = QVBoxLayout(roi_box)
+        self.draw_roi_btn = QPushButton("Draw ROI")
+        self.draw_roi_btn.setCheckable(True)
+        self.draw_roi_btn.toggled.connect(self._on_draw_roi_toggled)
+        self.clear_roi_btn = QPushButton("Clear ROI")
+        self.clear_roi_btn.setObjectName("ghost")
+        self.clear_roi_btn.clicked.connect(self._clear_roi)
+        roi_btns = QHBoxLayout()
+        roi_btns.addWidget(self.draw_roi_btn)
+        roi_btns.addWidget(self.clear_roi_btn)
+        roi_hint = QLabel("Drag on the video. Person feet and boxes/bags outside the zone are ignored (carrying + YOLO person).")
+        roi_hint.setObjectName("muted")
+        roi_hint.setWordWrap(True)
+        roi_layout.addLayout(roi_btns)
+        roi_layout.addWidget(roi_hint)
+        side.addWidget(roi_box)
+
         alert_box = QGroupBox("Alerts")
         alert_layout = QVBoxLayout(alert_box)
         self.desktop_alerts = QCheckBox("Desktop notification")
@@ -288,8 +391,12 @@ class MonitorWindow(QMainWindow):
         self.status_label.setWordWrap(True)
         self.fps_label = QLabel("0.0 fps")
         self.fps_label.setObjectName("muted")
+        self.stats_label = QLabel("visits 0  interacts 0  carries 0  takeaways 0")
+        self.stats_label.setObjectName("status")
+        self.stats_label.setWordWrap(True)
         side.addWidget(self.status_label)
         side.addWidget(self.fps_label)
+        side.addWidget(self.stats_label)
         side.addStretch(1)
 
         right = QWidget()
@@ -302,6 +409,7 @@ class MonitorWindow(QMainWindow):
         self.alert_banner.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.video = VideoView()
+        self.video.roi_drawn.connect(self._on_roi_drawn)
 
         results_header = QHBoxLayout()
         results_title = QLabel("Results")
@@ -411,6 +519,7 @@ class MonitorWindow(QMainWindow):
         self.worker.event_ready.connect(self._on_event)
         self.worker.status.connect(self.status_label.setText)
         self.worker.fps_ready.connect(lambda fps: self.fps_label.setText(f"{fps:.1f} fps"))
+        self.worker.stats_ready.connect(self.stats_label.setText)
         self.worker.failed.connect(self._on_failed)
         self.worker.recording_changed.connect(self.rec_btn.setChecked)
         self.worker.pipeline_ready.connect(self._on_pipeline_ready)
@@ -419,6 +528,33 @@ class MonitorWindow(QMainWindow):
         self.connect_btn.setText("Disconnect")
         self.connect_btn.setEnabled(True)
         self.rec_btn.setEnabled(True)
+
+    def _on_draw_roi_toggled(self, enabled: bool) -> None:
+        self.video.set_drawing(enabled)
+        if enabled:
+            self.status_label.setText("Drag a rectangle on the video to set the ROI")
+
+    def _on_roi_drawn(self, roi: tuple) -> None:
+        self.draw_roi_btn.setChecked(False)
+        self.video.set_drawing(False)
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.request_roi(roi)
+        elif self.pipeline is not None:
+            self.pipeline.set_roi(roi)
+        self.cfg.setdefault("roi", {})["xyxy"] = list(roi)
+        self.cfg.setdefault("roi", {})["enabled"] = True
+        self.status_label.setText("ROI set — person + boxes outside it are ignored")
+
+    def _clear_roi(self) -> None:
+        self.draw_roi_btn.setChecked(False)
+        self.video.set_drawing(False)
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.request_roi(None)
+        elif self.pipeline is not None:
+            self.pipeline.set_roi(None)
+        self.cfg.setdefault("roi", {})["xyxy"] = []
+        self.cfg.setdefault("roi", {})["enabled"] = False
+        self.status_label.setText("ROI cleared")
 
     def _stop_stream(self) -> None:
         if self.worker is None:

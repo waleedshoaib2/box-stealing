@@ -95,8 +95,17 @@ def draw(
     dual_states: dict[int, DualPersonState] | None = None,
     status_line: str | None = None,
     last_event: object | None = None,
+    roi_norm: tuple[float, float, float, float] | None = None,
 ) -> np.ndarray:
     canvas = frame.copy()
+    if roi_norm is not None:
+        h, w = canvas.shape[:2]
+        x1, y1, x2, y2 = int(roi_norm[0] * w), int(roi_norm[1] * h), int(roi_norm[2] * w), int(roi_norm[3] * h)
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (40, 200, 255), -1)
+        canvas = cv2.addWeighted(overlay, 0.12, canvas, 0.88, 0)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), (40, 200, 255), 2)
+        cv2.putText(canvas, "ROI", (x1 + 8, max(y1 + 22, 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (40, 200, 255), 2, cv2.LINE_AA)
     for track in tracks:
         if track.missed > 0:
             continue
@@ -121,7 +130,11 @@ def draw(
                 ctx = dual_ctx
                 extra = dual_ctx.state
                 if draw_scores:
-                    extra += f" v={dual_ctx.visit} t={dual_ctx.takeaways} h={dual_ctx.hold_score:.2f}"
+                    extra += (
+                        f" v={dual_ctx.visit} i={dual_ctx.interactions} "
+                        f"c={dual_ctx.carries} t={dual_ctx.takeaways} "
+                        f"h={dual_ctx.hold_score:.2f} n={dual_ctx.interact_score:.2f}"
+                    )
             elif bag_ctx is not None:
                 ctx = bag_ctx
                 extra = bag_ctx.state

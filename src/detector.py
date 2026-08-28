@@ -48,16 +48,7 @@ class YOLODetector:
             "box": ["cardboard box", "box"],
             "bag": ["shopping bag", "bag", "backpack"],
         }
-        names: list[str] = []
-        label_to_canonical: dict[str, str] = {}
-        for canonical, aliases in prompts.items():
-            if canonical not in CANONICAL:
-                raise ValueError(f"Prompt group {canonical!r} is not person/box/bag/open_box")
-            for alias in aliases:
-                key = str(alias).strip().lower()
-                if key not in label_to_canonical:
-                    names.append(str(alias).strip())
-                    label_to_canonical[key] = canonical
+        names, label_to_canonical = _prompt_names(prompts)
 
         model = _load_world_model(weights)
         if not hasattr(model, "set_classes"):
@@ -68,6 +59,15 @@ class YOLODetector:
         model.set_classes(names)
         self._world_label_map = label_to_canonical
         self._models.append((model, {}))
+
+    def set_prompts(self, prompts: dict[str, list[str]]) -> None:
+        """Swap YOLO-World classes without reloading weights (e.g. on task change)."""
+        if self.mode != "yolo_world" or not self._models:
+            return
+        names, label_to_canonical = _prompt_names(prompts)
+        model, _ = self._models[0]
+        model.set_classes(names)
+        self._world_label_map = label_to_canonical
 
     def _load_custom(self) -> None:
         from ultralytics import YOLO
@@ -118,13 +118,13 @@ class YOLODetector:
         if boxes is None or boxes.xyxy is None:
             return detections
 
-        names = result.names if getattr(result, "names", None) else {}
+        names = getattr(result, "names", None)
         xyxy = boxes.xyxy.cpu().numpy()
         confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
         clss = boxes.cls.cpu().numpy().astype(int) if boxes.cls is not None else np.zeros(len(xyxy), dtype=int)
 
         for bbox, conf, cls_id in zip(xyxy, confs, clss):
-            raw_label = str(names.get(int(cls_id), cls_id)).strip()
+            raw_label = _class_name(names, int(cls_id)).strip()
             canonical = self._to_canonical(int(cls_id), raw_label, class_map)
             if canonical is None:
                 continue
@@ -150,6 +150,30 @@ class YOLODetector:
             if canonical in lowered or token in lowered:
                 return canonical
         return None
+
+
+def _class_name(names: Any, cls_id: int) -> str:
+    """YOLO-World `result.names` is a dict or a list, depending on Ultralytics version."""
+    if isinstance(names, dict):
+        value = names.get(cls_id, names.get(str(cls_id), cls_id))
+        return str(value)
+    if isinstance(names, (list, tuple)) and 0 <= cls_id < len(names):
+        return str(names[cls_id])
+    return str(cls_id)
+
+
+def _prompt_names(prompts: dict[str, list[str]]) -> tuple[list[str], dict[str, str]]:
+    names: list[str] = []
+    label_to_canonical: dict[str, str] = {}
+    for canonical, aliases in prompts.items():
+        if canonical not in CANONICAL:
+            raise ValueError(f"Prompt group {canonical!r} is not person/box/bag/open_box")
+        for alias in aliases:
+            key = str(alias).strip().lower()
+            if key not in label_to_canonical:
+                names.append(str(alias).strip())
+                label_to_canonical[key] = canonical
+    return names, label_to_canonical
 
 
 def _load_world_model(weights: str) -> Any:

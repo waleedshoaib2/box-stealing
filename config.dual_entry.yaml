@@ -32,6 +32,8 @@ dual_entry:
   enabled: true
   hold_score_threshold: 0.50
   min_hold_frames: 10
+  interact_score_threshold: 0.45
+  min_interact_frames: 8
   min_present_frames: 8
   exit_confirm_frames: 45
   exit_confirm_seconds: 1.5

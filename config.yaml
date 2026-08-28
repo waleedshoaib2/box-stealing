@@ -82,6 +82,8 @@ dual_entry:
   enabled: false              # take a parcel, leave, come back for another — config.dual_entry.yaml
   hold_score_threshold: 0.50
   min_hold_frames: 10
+  interact_score_threshold: 0.45
+  min_interact_frames: 8
   min_present_frames: 8
   exit_confirm_frames: 45     # person must be gone this long to count as left
   exit_confirm_seconds: 1.5   # extra: ignore brief detector dropouts
@@ -113,6 +115,15 @@ visualizer:
   draw_scores: true
   trail_length: 20
   window_name: put-box-in-bag
+
+roi:
+  enabled: false
+  xyxy: []                    # normalized [x1, y1, x2, y2] 0-1; draw in the app
+  classes:                    # detections kept only if they fall in the ROI
+    - person
+    - box
+    - bag
+    - open_box
 
 source:
   path: rtsp://USER:PASS@CAMERA_IP:554/Streaming/Channels/101/

@@ -18,12 +18,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.association import hold_score
+from src.association import hold_score, interact_score
 from src.tracker import Track
 
 
 IDLE = "idle"
 ENTERED = "entered"
+INTERACTING = "interacting"
 CARRYING = "carrying"
 EXITED = "exited"
 REENTERED = "reentered"
@@ -61,8 +62,11 @@ class DualPersonState:
     person_id: int
     state: str = IDLE
     hold_score: float = 0.0
+    interact_score: float = 0.0
     visit: int = 0
     takeaways: int = 0
+    interactions: int = 0
+    carries: int = 0
     box_id: int | None = None
 
 
@@ -70,6 +74,8 @@ class DualPersonState:
 class DualEntryEngine:
     hold_score_threshold: float = 0.50
     min_hold_frames: int = 10
+    interact_score_threshold: float = 0.45
+    min_interact_frames: int = 8
     min_present_frames: int = 8
     exit_confirm_frames: int = 45
     exit_confirm_seconds: float = 1.5
@@ -82,10 +88,16 @@ class DualEntryEngine:
     present_frames: int = 0
     visits: int = 0
     takeaways: int = 0
+    interactions: int = 0
+    carries: int = 0
     picked_this_visit: bool = False
+    interacted_this_visit: bool = False
+    carried_this_visit: bool = False
     fired_this_visit: bool = False
     hold_frames: int = 0
+    interact_frames: int = 0
     hold_score_value: float = 0.0
+    interact_score_value: float = 0.0
     held_box_id: int | None = None
     last_person_id: int | None = None
     last_takeaway_time: float | None = None
@@ -97,6 +109,8 @@ class DualEntryEngine:
         keys = (
             "hold_score_threshold",
             "min_hold_frames",
+            "interact_score_threshold",
+            "min_interact_frames",
             "min_present_frames",
             "exit_confirm_frames",
             "exit_confirm_seconds",
@@ -109,7 +123,10 @@ class DualEntryEngine:
         return self._people
 
     def status_line(self) -> str:
-        return f"visits {self.visits}  takeaways {self.takeaways}  {self.state}"
+        return (
+            f"visits {self.visits}  interacts {self.interactions}  "
+            f"carries {self.carries}  takeaways {self.takeaways}  {self.state}"
+        )
 
     def update(
         self,
@@ -156,17 +173,35 @@ class DualEntryEngine:
         self.present = True
         self.present_frames += 1
 
-        best_box, score = _best_hold(person, boxes)
-        self.hold_score_value = score
-        if best_box is not None and score >= self.hold_score_threshold:
+        best_box, hold = _best_hold(person, boxes)
+        interact_box, interact = _best_interact(person, boxes)
+        self.hold_score_value = hold
+        self.interact_score_value = interact
+        if interact_box is not None and interact >= self.interact_score_threshold:
+            self.interact_frames += 1
+            if self.held_box_id is None:
+                self.held_box_id = interact_box.track_id
+        else:
+            self.interact_frames = 0
+        if best_box is not None and hold >= self.hold_score_threshold:
             self.hold_frames += 1
             self.held_box_id = best_box.track_id
         else:
             self.hold_frames = 0
 
-        if self.hold_frames >= self.min_hold_frames:
-            self.picked_this_visit = True
+        if self.interact_frames >= self.min_interact_frames:
+            if not self.interacted_this_visit:
+                self.interacted_this_visit = True
+                self.interactions += 1
             if self.state in (ENTERED, REENTERED, IDLE):
+                self.state = INTERACTING
+
+        if self.hold_frames >= self.min_hold_frames:
+            if not self.carried_this_visit:
+                self.carried_this_visit = True
+                self.carries += 1
+            self.picked_this_visit = True
+            if self.state in (ENTERED, REENTERED, INTERACTING, IDLE):
                 self.state = CARRYING
             if (
                 self.takeaways >= 1
@@ -179,15 +214,21 @@ class DualEntryEngine:
         ctx = self._people.setdefault(person.track_id, DualPersonState(person_id=person.track_id))
         ctx.state = self.state
         ctx.hold_score = self.hold_score_value
+        ctx.interact_score = self.interact_score_value
         ctx.visit = self.visits
         ctx.takeaways = self.takeaways
+        ctx.interactions = self.interactions
+        ctx.carries = self.carries
         ctx.box_id = self.held_box_id
         return events
 
     def _begin_visit(self, timestamp: float) -> None:
         self.present_frames = 0
         self.hold_frames = 0
+        self.interact_frames = 0
         self.picked_this_visit = False
+        self.interacted_this_visit = False
+        self.carried_this_visit = False
         self.fired_this_visit = False
         self.held_box_id = None
         if self.takeaways >= 1 and self._within_reentry_window(timestamp):
@@ -200,6 +241,8 @@ class DualEntryEngine:
             return
         self.visits = 1
         self.takeaways = 0
+        self.interactions = 0
+        self.carries = 0
         self.last_takeaway_time = None
         self.state = ENTERED
 
@@ -231,6 +274,7 @@ class DualEntryEngine:
                 self.state = IDLE
                 self.visits = 0
         self.hold_frames = 0
+        self.interact_frames = 0
         self.picked_this_visit = False
         self.present_frames = 0
         return None
@@ -257,8 +301,11 @@ class DualEntryEngine:
         ctx = self._people.setdefault(person.track_id, DualPersonState(person_id=person.track_id))
         ctx.state = EVENT
         ctx.hold_score = self.hold_score_value
+        ctx.interact_score = self.interact_score_value
         ctx.visit = self.visits
         ctx.takeaways = self.takeaways
+        ctx.interactions = self.interactions
+        ctx.carries = self.carries
         ctx.box_id = self.held_box_id
         return event
 
@@ -270,6 +317,20 @@ def _best_hold(person: Track, boxes: list[Track]) -> tuple[Track | None, float]:
         if box.missed != 0:
             continue
         score = hold_score(person, box)
+        if score > best_score:
+            best, best_score = box, score
+    if best is None:
+        return None, 0.0
+    return best, best_score
+
+
+def _best_interact(person: Track, boxes: list[Track]) -> tuple[Track | None, float]:
+    best: Track | None = None
+    best_score = -1.0
+    for box in boxes:
+        if box.missed != 0:
+            continue
+        score = interact_score(person, box)
         if score > best_score:
             best, best_score = box, score
     if best is None:
